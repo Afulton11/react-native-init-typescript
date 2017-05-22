@@ -3,11 +3,11 @@ A Python script that can be run to build a typescript react-native project
 
 # Installation
 
-`
-git clone https://github.com/Afulton11/react-native-typescript-builder.git
-chmod +x react-native-typescript-builder/react-native-init-typescript
-`
-Then Add the react-native-typescript-builder folder to your PATH environment variable.
+1. `git clone https://github.com/Afulton11/react-native-typescript-builder.git`
+2. `chmod +x react-native-typescript-builder/react-native-init-typescript`
+
+3. Add the *react-native-typescript-builder* folder to your PATH environment variable.
+4. Test that it has been installed by running: `react-native-init-typescript --help`
 
 # Usage
 To create a react-native project with typescript called Awesome app, just run:
