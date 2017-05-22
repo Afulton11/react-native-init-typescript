@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 RNTypescript.py
 
@@ -15,31 +16,62 @@ import sys
 import os
 import argparse
 import subprocess
+import fileinput
+from shutil import copy2, rmtree
+from distutils.dir_util import copy_tree
 from lazyme.string import color_print
 
-DEFAULT_JS_LOC = "index"
-TYPESCRIPT_JS_LOC = "artifacts/index"
+################################################
+## These Constants are the script's settings. ##
+################################################
 
+#This is the project name text inside of the resources/index.android.tsx and index.ios.tsx
+PROJECT_NAME_TEXT = "[project-name]"
+
+DEFAULT_JS_INDEX_LOC = "index"
+TS_JS_INDEX_LOC = "artifacts/index"
+
+IOS_DIR = "ios/"
+IOS_APPDELEGATEM = "AppDelegate.m"
+
+ANDROID_DIR = "android/app/"
+ANDROID_GRADLE_DIR = ANDROID_DIR + "build.gradle"
+ANDROID_JAVA_DIR = ANDROID_DIR + "src/main/java/com"
+ANDROID_MAINAPPLICATION = "MainApplication.java"
+
+ANDROID_GRADLE_BEFORE_LINE = "apply from: \"../../node_modules/react-native/react.gradle\""
 ANDROID_GRADLE_LINES = [
+    "",
     "project.ext.react = [",
-    "   entryFile: \"" + TYPESCRIPT_JS_LOC + ".android.js\"",
+    "   entryFile: \"" + TS_JS_INDEX_LOC + ".android.js\"",
     "]",
+    ""
 ]
 
+ANDROID_MAIN_APP_BEFORE_LINE = "  public ReactNativeHost getReactNativeHost() {"
 ANDROID_MAIN_APP_LINES = [
+    ""
     "@Override",
     "protected String getJsMainModuleName()",
-    "   return \"" + TYPESCRIPT_JS_LOC +".android\""
+    "   return \"" + TS_JS_INDEX_LOC +".android\"",
+    ""
 ]
+ANDROID_MAIN_APP_LINE_OFFSET = 2
 
-IOS_APPDELEGATEM_JS_LOC = DEFAULT_JS_LOC + ".ios"
-IOS_APPDELEGATEM_REPLACEMENT = TYPESCRIPT_JS_LOC + ".ios"
+IOS_APPDELEGATEM_JS_LOC = DEFAULT_JS_INDEX_LOC + ".ios"
+IOS_APPDELEGATEM_REPLACEMENT = TS_JS_INDEX_LOC + ".ios"
 
 def print_exception():
     """
     Prints the most recent exception's info
     """
-    print sys.exc_info()
+    print_error(sys.exc_info())
+
+def print_error(error_message):
+    """
+    Prints the error message in red text using color_print() from lazyme.string
+    """
+    color_print("ERROR: " + error_message, color="red")
 
 def run_command(entire_command, cwd=os.getcwd()):
     """
@@ -47,10 +79,76 @@ def run_command(entire_command, cwd=os.getcwd()):
     @param entire_command the str containing the entire command to run.
     """
     try:
-        subprocess.Popen(entire_command.split(' '), cwd)
+        process = subprocess.Popen(entire_command.split(' '), cwd=cwd)
+        process.wait()
     except subprocess.CalledProcessError:
         #Error while executing command
         print_exception()
+
+def get_script_wd():
+    """
+    returns the current directory of this .py file.
+    """
+    return os.path.join(
+        os.path.dirname(os.path.realpath(__file__)),
+        "resources/"
+    )
+
+def get_resource_path(resource_name):
+    """
+    returns a resource from this script's filepath.
+    """
+    return os.path.join(get_script_wd(), resource_name)
+
+def read_file_lines(file_path):
+    """
+    Reads the file_path file in
+    """
+    if os.path.exists(file_path):
+        file_reader = open(file_path, "r")
+        file_contents = file_reader.readlines()
+        return file_contents
+    else:
+        print_error("File Not Found! " + file_path)
+        exit(1)
+
+def save_file_lines(file_path, lines):
+    """
+    Erases contents of file in file_path and
+    writes all lines to the file.
+    """
+    file_writer = open(file_path, "w")
+    file_contents = "".join(lines)
+    file_writer.write(file_contents)
+    file_writer.flush()
+    file_writer.close()
+
+def replace_file_text(file_path, text_to_replace, replacement_text, first_occurrence=True):
+    """
+    Searches a file for text_to_replace, and replaces the text with the replacement_text.
+    @param first_occurrence whether or not to replace only the first occurrence of text_to_replace.
+    """
+    lines = read_file_lines(file_path)
+    for line in lines:
+        if text_to_replace in line:
+            line = str(line).replace(text_to_replace, replacement_text)
+            if first_occurrence:
+                break
+    fileinput.close()
+
+def insert_lines_before_line(file_path, before_line, lines, before_line_offset=1):
+    """
+    Inserts the lines before the before_line in the given file.
+    @param before_line the str containing the exact contents of the file line.all
+    """
+    file_lines = read_file_lines(file_path)
+    before_line_index = 0
+    for line in lines:
+        if line == before_line:
+            break
+        before_line_index += 1
+
+    file_lines.insert(before_line_index - before_line_offset, lines)
 
 
 
@@ -62,6 +160,7 @@ class Project(object):
     def __init__(self, name, path):
         self.__name = name
         self.__path = path
+        self.__wd = os.path.normpath(os.path.join(self.__path, self.__name))
 
     def build(self, vscode=False):
         """
@@ -80,21 +179,20 @@ class Project(object):
 
         print "Built React-native Typescript Project!"
         print "You can find it at: " + self.getwd() + "!"
-        return None
 
     def __create(self):
         """
         Creates the react-native project
         """
         print "Creating react-native project..."
-        # run_command("react-native init " + self.get_name())
+        run_command("react-native init " + self.get_name(), self.get_path())
 
     def __install_typescript_packages(self):
         """
         Installs all necessary typescript developer packages into the project folder.
         npm install
             typescript
-            typings --> Should this be installed globally so you can use the typings command?
+            typings
             tslint
             rimraf
             concurrently
@@ -107,11 +205,13 @@ class Project(object):
         if os.path.exists(self.getwd()):
             run_command(
                 "npm install typescript typings tslint rimraf concurrently" +
-                " @types/react@latest @types/react-native@latest @types/jest@latest"
+                " @types/react@latest @types/react-native@latest @types/jest@latest" +
+                " --save-dev",
+                self.getwd()
             )
         else:
-            color_print("Project Working Directory doesn't exist!", color="red")
-            color_print("\t" + self.getwd(), color="red")
+            print_error("Project Working Directory doesn't exist!")
+            print_error("\t" + self.getwd())
             exit(1)
 
     def __import_typescript_files(self):
@@ -123,7 +223,17 @@ class Project(object):
             .vscode/tasks.json
         """
         print "Importing TypeScript files..."
+        ts_config = get_resource_path("tsconfig.json")
+        ts_lint = get_resource_path("tslint.json")
+        src_dir = get_resource_path("src/")
+        copy2(ts_config, self.getwd())
+        copy2(ts_lint, self.getwd())
 
+        #Make the src/ destination folder.
+        src_dst_dir = os.path.join(self.getwd(), "src/")
+        os.mkdir(src_dst_dir)
+
+        copy_tree(src_dir, src_dst_dir)
 
     def __import_vscode_tasks(self):
         """
@@ -137,12 +247,41 @@ class Project(object):
             build --> Builds the Typescript project
         """
         print "Importing vscode tasks to the project..."
+        vscode = get_resource_path(".vscode/")
+        vscode_dst = os.path.join(self.getwd(), ".vscode/")
+        copy_tree(vscode, vscode_dst)
 
     def __update_entry_file_paths(self):
         """
         Updates the entry file paths for both ios and android.
         """
         print "Updating entry file paths..."
+        # Handle iOS entry file paths
+        appdelegate_m = self.getwd_resource(
+            os.path.join(IOS_DIR, self.get_name(), IOS_APPDELEGATEM)
+        )
+        replace_file_text(
+            appdelegate_m,
+            IOS_APPDELEGATEM_JS_LOC,
+            IOS_APPDELEGATEM_REPLACEMENT
+        )
+
+        #Handle android entry file paths
+        build_gradle = self.getwd_resource(ANDROID_GRADLE_DIR)
+        main_app_java = self.getwd_resource(
+            os.path.join(ANDROID_JAVA_DIR, self.get_name(), ANDROID_MAINAPPLICATION)
+        )
+        insert_lines_before_line(
+            build_gradle,
+            ANDROID_GRADLE_BEFORE_LINE,
+            ANDROID_GRADLE_LINES
+        )
+        insert_lines_before_line(
+            main_app_java,
+            ANDROID_MAIN_APP_BEFORE_LINE,
+            ANDROID_MAIN_APP_LINES,
+            ANDROID_MAIN_APP_LINE_OFFSET
+        )
 
     def __add_package_scripts(self):
         """
@@ -168,6 +307,14 @@ class Project(object):
             .flowconfig
         """
         print "Removing unnecessary react-native files..."
+        tests_path = self.getwd_resource("__tests__/")
+        flow_config = self.getwd_resource(".flowconfig")
+        android_index = self.getwd_resource("index.android.js")
+        ios_index = self.getwd_resource("index.ios.js")
+        rmtree(tests_path)
+        os.remove(flow_config)
+        os.remove(android_index)
+        os.remove(ios_index)
 
     def get_name(self):
         """
@@ -177,7 +324,7 @@ class Project(object):
 
     def get_path(self):
         """
-        returns this project's path.
+        returns this project's path, excluding the base folder name.
         """
         return self.__path
 
@@ -185,7 +332,13 @@ class Project(object):
         """
         returns this project's working directory.
         """
-        return os.path.normpath(os.path.join(self.__path, self.__name))
+        return self.__wd
+
+    def getwd_resource(self, resource_name):
+        """
+        returns the path of a file, or directory, inside of this Project's working directory.
+        """
+        return os.path.join(self.getwd(), resource_name)
 
 try:
     ARG_PARSER = argparse.ArgumentParser()
@@ -197,7 +350,7 @@ try:
     ARG_PARSER.add_argument(
         "project_dir",
         nargs='?',
-        help="The directory the RN typescript project will be installed in.",
+        help="The directory the RN typescript project will be created in.",
         default=os.getcwd(),
     )
     ARG_PARSER.add_argument(

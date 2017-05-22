@@ -1,1 +1,8 @@
 .DS_Store
+.vscode/*
+.vscode/.*
+resources/.vscode/.*
+resources/.ropeproject/
+.idea/
+.vscode/
+test/
