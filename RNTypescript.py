@@ -43,23 +43,55 @@ ANDROID_GRADLE_BEFORE_LINE = "apply from: \"../../node_modules/react-native/reac
 ANDROID_GRADLE_LINES = [
     "",
     "project.ext.react = [",
-    "   entryFile: \"" + TS_JS_INDEX_LOC + ".android.js\"",
+    "\tentryFile: \"" + TS_JS_INDEX_LOC + ".android.js\"",
     "]",
     ""
 ]
 
+ANDROID_MAIN_APP_LINE_OFFSET = 2
 ANDROID_MAIN_APP_BEFORE_LINE = "  public ReactNativeHost getReactNativeHost() {"
 ANDROID_MAIN_APP_LINES = [
     ""
-    "@Override",
-    "protected String getJsMainModuleName()",
-    "   return \"" + TS_JS_INDEX_LOC +".android\"",
+    "\t@Override",
+    "\tprotected String getJsMainModuleName()",
+    "\t\treturn \"" + TS_JS_INDEX_LOC +".android\"",
     ""
 ]
-ANDROID_MAIN_APP_LINE_OFFSET = 2
 
 IOS_APPDELEGATEM_JS_LOC = DEFAULT_JS_INDEX_LOC + ".ios"
 IOS_APPDELEGATEM_REPLACEMENT = TS_JS_INDEX_LOC + ".ios"
+
+##Package.json settings
+PACKAGE_SCRIPTS_LINE_OFFSET = -2
+PACKAGE_SCRIPTS_BEFORE_LINE = "\t\"scripts\": {"
+PACKAGE_SCRIPTS_LINES = [
+    '\t\t"test": "jest --coverage",',
+    '\t\t"tsc": "tsc",',
+    '\t\t"clean": "rimraf artifacts",',
+    '\t\t"build": "npm run clean && npm run tsc --",',
+    '\t\t"lint": "tslint src/**/*.ts",',
+    '\t\t"watch": "npm run build -- -w",',
+    "\t\t\"start:ios\": \"npm run build && concurrently -r 'npm run watch' 'react-native " +
+    "run-ios'\",",
+    "\t\t\"start:android\": \"npm run build && concurrently -r 'npm run watch' 'react-native " +
+    "run-android'\","
+]
+
+PACKAGE_JEST_LINE_OFFSET = -1
+PACKAGE_JEST_BEFORE_LINE = "\t\"jest\": {"
+PACKAGE_JEST_LINES = [
+    '\t\t"testRegex": "artifacts/.+\\\\.(test|spec).js$",',
+    '\t\t"coverageDirectory": "coverage",',
+    '\t\t"coverageReporters": [',
+    '\t\t\t"text-summary",',
+    '\t\t\t"html"',
+    '\t],',
+    '\t\t"collectCoverageFrom": [',
+    '\t\t\t"artifacts/**/*.js",',
+    '\t\t\t"!artifacts/**/*.spec.js",',
+    '\t\t\t"!artifacts/**/*.index.js"',
+    '\t],'
+]
 
 def print_exception():
     """
@@ -107,6 +139,8 @@ def read_file_lines(file_path):
     if os.path.exists(file_path):
         file_reader = open(file_path, "r")
         file_contents = file_reader.readlines()
+        file_reader.flush()
+        file_reader.close()
         return file_contents
     else:
         print_error("File Not Found! " + file_path)
@@ -117,8 +151,11 @@ def save_file_lines(file_path, lines):
     Erases contents of file in file_path and
     writes all lines to the file.
     """
+    for line in lines:
+        if isinstance(line, list):
+            print line
     file_writer = open(file_path, "w")
-    file_contents = "".join(lines)
+    file_contents = ''.join(lines)
     file_writer.write(file_contents)
     file_writer.flush()
     file_writer.close()
@@ -128,27 +165,34 @@ def replace_file_text(file_path, text_to_replace, replacement_text, first_occurr
     Searches a file for text_to_replace, and replaces the text with the replacement_text.
     @param first_occurrence whether or not to replace only the first occurrence of text_to_replace.
     """
-    lines = read_file_lines(file_path)
-    for line in lines:
+    file_lines = read_file_lines(file_path)
+    for line in file_lines:
         if text_to_replace in line:
             line = str(line).replace(text_to_replace, replacement_text)
             if first_occurrence:
                 break
     fileinput.close()
+    return file_lines
 
 def insert_lines_before_line(file_path, before_line, lines, before_line_offset=1):
     """
     Inserts the lines before the before_line in the given file.
     @param before_line the str containing the exact contents of the file line.all
     """
+    before_line = before_line + '\n'
     file_lines = read_file_lines(file_path)
     before_line_index = 0
-    for line in lines:
+    for line in file_lines:
         if line == before_line:
+            print_error("found same lines! ::" + str(before_line_index))
             break
         before_line_index += 1
 
-    file_lines.insert(before_line_index - before_line_offset, lines)
+    for line in lines:
+        file_lines.insert(before_line_index - before_line_offset, line + '\n')
+        before_line_index += 1
+
+    return file_lines
 
 
 
@@ -167,12 +211,11 @@ class Project(object):
         Builds the entire react-native typescript project and installs all required packages.
         """
         print "Building React-native Typescript Project..."
-        self.__create()
-        self.__install_typescript_packages()
+        # self.__create()
+        # self.__install_typescript_packages()
         self.__import_typescript_files()
         self.__update_entry_file_paths()
-        self.__add_package_scripts()
-        self.__add_typescript_jest()
+        self.__update_package_json()
         self.__delete_unnecessary_files()
         if vscode:
             self.__import_vscode_tasks()
@@ -231,7 +274,8 @@ class Project(object):
 
         #Make the src/ destination folder.
         src_dst_dir = os.path.join(self.getwd(), "src/")
-        os.mkdir(src_dst_dir)
+        if not os.path.exists(src_dst_dir):
+            os.mkdir(src_dst_dir)
 
         copy_tree(src_dir, src_dst_dir)
 
@@ -260,42 +304,63 @@ class Project(object):
         appdelegate_m = self.getwd_resource(
             os.path.join(IOS_DIR, self.get_name(), IOS_APPDELEGATEM)
         )
-        replace_file_text(
+        appdelegate_m_lines = replace_file_text(
             appdelegate_m,
             IOS_APPDELEGATEM_JS_LOC,
             IOS_APPDELEGATEM_REPLACEMENT
         )
+        save_file_lines(appdelegate_m, appdelegate_m_lines)
 
         #Handle android entry file paths
         build_gradle = self.getwd_resource(ANDROID_GRADLE_DIR)
         main_app_java = self.getwd_resource(
             os.path.join(ANDROID_JAVA_DIR, self.get_name(), ANDROID_MAINAPPLICATION)
         )
-        insert_lines_before_line(
+        build_gradle_lines = insert_lines_before_line(
             build_gradle,
             ANDROID_GRADLE_BEFORE_LINE,
             ANDROID_GRADLE_LINES
         )
-        insert_lines_before_line(
+        save_file_lines(build_gradle, build_gradle_lines)
+        main_app_lines = insert_lines_before_line(
             main_app_java,
             ANDROID_MAIN_APP_BEFORE_LINE,
             ANDROID_MAIN_APP_LINES,
             ANDROID_MAIN_APP_LINE_OFFSET
         )
+        save_file_lines(main_app_java, main_app_lines)
 
-    def __add_package_scripts(self):
+    def __update_package_json(self):
         """
         Adds typescript scripts to the project's package.json
         These scripts are used to run/test the RN project.
-        """
-        print "Adding TypeScript scripts to package.json..."
-
-    def __add_typescript_jest(self):
-        """
-        Add the jest testing preset to the project's package.json
+        Also, this
+        Adds the jest testing preset to the project's package.json
         This allows the user to run tests using jest.
         """
+        package_json = self.getwd_resource("package.json")
+
+        #Handle package.json scripts:
+        print "Adding TypeScript scripts to package.json..."
+        package_json_lines = insert_lines_before_line(
+            package_json,
+            PACKAGE_SCRIPTS_BEFORE_LINE,
+            PACKAGE_SCRIPTS_LINES,
+            PACKAGE_SCRIPTS_LINE_OFFSET
+        )
+        save_file_lines(package_json, package_json_lines)
+
+
+        #Handle package.json jest testing preset:
         print "Adding TypeScript jest test presets to package.json..."
+        jest_lines = insert_lines_before_line(
+            package_json,
+            PACKAGE_JEST_BEFORE_LINE,
+            PACKAGE_JEST_LINES,
+            PACKAGE_JEST_LINE_OFFSET
+        )
+        save_file_lines(package_json, jest_lines)
+
 
     def __delete_unnecessary_files(self):
         """
