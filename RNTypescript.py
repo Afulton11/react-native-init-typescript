@@ -217,7 +217,7 @@ class Project(object):
         self.__update_package_json()
         self.__delete_unnecessary_files()
         if vscode:
-            self.__import_vscode_tasks()
+            self.import_vscode_tasks()
 
         print "Built React-native Typescript Project!"
         print "You can find it at: " + self.getwd() + "!"
@@ -277,22 +277,6 @@ class Project(object):
             os.mkdir(src_dst_dir)
 
         copy_tree(src_dir, src_dst_dir)
-
-    def __import_vscode_tasks(self):
-        """
-        Imports vscode tasks into the react-native typescript project.
-        These use the package.json's scripts.
-        Here is a list of the tasks:
-            start:ios --> Starts the app on ios
-            start:android --> Starts the app on android
-            runServer --> Starts the js development server
-            test --> run tests
-            build --> Builds the Typescript project
-        """
-        print "Importing vscode tasks to the project..."
-        vscode = get_resource_path(".vscode/")
-        vscode_dst = os.path.join(self.getwd(), ".vscode/")
-        copy_tree(vscode, vscode_dst)
 
     def __update_index_registries(self):
         """
@@ -426,6 +410,22 @@ class Project(object):
         if os.path.exists(directory_path):
             rmtree(directory_path)
 
+    def import_vscode_tasks(self):
+        """
+        Imports vscode tasks into the react-native typescript project.
+        These use the package.json's scripts.
+        Here is a list of the tasks:
+            start:ios --> Starts the app on ios
+            start:android --> Starts the app on android
+            runServer --> Starts the js development server
+            test --> run tests
+            build --> Builds the Typescript project
+        """
+        print "Importing vscode tasks to the project..."
+        vscode = get_resource_path(".vscode/")
+        vscode_dst = os.path.join(self.getwd(), ".vscode/")
+        copy_tree(vscode, vscode_dst)
+
 
     def get_name(self):
         """
@@ -462,20 +462,28 @@ try:
         "project_dir",
         nargs='?',
         help="The directory the RN typescript project will be created in.",
-        default=os.getcwd(),
+        default=os.getcwd()
     )
     ARG_PARSER.add_argument(
         "-vs",
         "--vscode-tasks",
         help="Install vs-code tasks into the react-native project.",
-        action='store_true',
+        action='store_true'
+    )
+    ARG_PARSER.add_argument(
+        "--vs-only",
+        help="Only Import the vs-code tasks into an already existing react-native project.",
+        action='store_true'
     )
 
     ARGS = ARG_PARSER.parse_args()
 
     CREATED_PROJECT = Project(ARGS.project_name, ARGS.project_dir)
 
-    CREATED_PROJECT.build(ARGS.vscode_tasks)
+    if not ARGS.vs_only:
+        CREATED_PROJECT.build(ARGS.vscode_tasks)
+    else:
+        CREATED_PROJECT.import_vscode_tasks()
 
 except argparse.ArgumentError:
     print_exception()
