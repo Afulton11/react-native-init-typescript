@@ -14,9 +14,9 @@ Note, Before running make sure the project dir has no folder with the project's 
 """
 import sys
 import os
+import re
 import argparse
 import subprocess
-import fileinput
 from shutil import copy2, rmtree
 from distutils.dir_util import copy_tree
 from lazyme.string import color_print
@@ -28,8 +28,10 @@ from lazyme.string import color_print
 #This is the project name text inside of the resources/index.android.tsx and index.ios.tsx
 PROJECT_NAME_TEXT = "[project-name]"
 
-DEFAULT_JS_INDEX_LOC = "index"
+DEFAULT_JS_LOC = "index"
 TS_JS_INDEX_LOC = "artifacts/index"
+TS_INDEX_LOC = "src/index"
+TS_INDEX_REGISTRY_REGEX = r'\(\'(\[project-name\])\','
 
 IOS_DIR = "ios/"
 IOS_APPDELEGATEM = "AppDelegate.m"
@@ -39,7 +41,7 @@ ANDROID_GRADLE_DIR = ANDROID_DIR + "build.gradle"
 ANDROID_JAVA_DIR = ANDROID_DIR + "src/main/java/com"
 ANDROID_MAINAPPLICATION = "MainApplication.java"
 
-ANDROID_GRADLE_BEFORE_LINE = "apply from: \"../../node_modules/react-native/react.gradle\""
+ANDROID_GRADLE_REGEX = r'(\n)apply from:\s"..\/..\/node_modules\/react-native\/react.gradle"'
 ANDROID_GRADLE_LINES = [
     "",
     "project.ext.react = [",
@@ -48,22 +50,21 @@ ANDROID_GRADLE_LINES = [
     ""
 ]
 
-ANDROID_MAIN_APP_LINE_OFFSET = 2
-ANDROID_MAIN_APP_BEFORE_LINE = "  public ReactNativeHost getReactNativeHost() {"
+ANBDROID_MAIN_APP_REGEX = r'new\sReactNativeHost\(.+\)\s{\n()'
 ANDROID_MAIN_APP_LINES = [
     ""
     "\t@Override",
-    "\tprotected String getJsMainModuleName()",
+    "\tprotected String getJsMainModuleName() {",
     "\t\treturn \"" + TS_JS_INDEX_LOC +".android\"",
+    "\t}",
     ""
 ]
 
-IOS_APPDELEGATEM_JS_LOC = DEFAULT_JS_INDEX_LOC + ".ios"
+IOS_APPDELEGATEM_REGEX = r'"(' + DEFAULT_JS_LOC + ".ios" + r')"'
 IOS_APPDELEGATEM_REPLACEMENT = TS_JS_INDEX_LOC + ".ios"
 
 ##Package.json settings
-PACKAGE_SCRIPTS_LINE_OFFSET = -2
-PACKAGE_SCRIPTS_BEFORE_LINE = "\t\"scripts\": {"
+PACKAGE_SCRIPTS_REGEX = r'"scripts":\s+{\n(\s+"start".+\n\s+"test".+\n)\s+},'
 PACKAGE_SCRIPTS_LINES = [
     '\t\t"test": "jest --coverage",',
     '\t\t"tsc": "tsc",',
@@ -74,23 +75,24 @@ PACKAGE_SCRIPTS_LINES = [
     "\t\t\"start:ios\": \"npm run build && concurrently -r 'npm run watch' 'react-native " +
     "run-ios'\",",
     "\t\t\"start:android\": \"npm run build && concurrently -r 'npm run watch' 'react-native " +
-    "run-android'\","
+    "run-android'\",",
+    "\t\t\"start\": \"node node_modules/react-native/local-cli/cli.js start\""
 ]
 
-PACKAGE_JEST_LINE_OFFSET = -1
-PACKAGE_JEST_BEFORE_LINE = "\t\"jest\": {"
+PACKAGE_JEST_REGEX = r'"jest":\s+{\n(.+)\s+}'
 PACKAGE_JEST_LINES = [
-    '\t\t"testRegex": "artifacts/.+\\\\.(test|spec).js$",',
+    '\t"preset": "react-native",',
+    '\t\t"testRegex": "artifacts/.+\\\\\\\\.(test|spec).js$",',
     '\t\t"coverageDirectory": "coverage",',
     '\t\t"coverageReporters": [',
     '\t\t\t"text-summary",',
     '\t\t\t"html"',
-    '\t],',
+    '\t\t],',
     '\t\t"collectCoverageFrom": [',
     '\t\t\t"artifacts/**/*.js",',
     '\t\t\t"!artifacts/**/*.spec.js",',
     '\t\t\t"!artifacts/**/*.index.js"',
-    '\t],'
+    '\t\t]'
 ]
 
 def print_exception():
@@ -132,9 +134,15 @@ def get_resource_path(resource_name):
     """
     return os.path.join(get_script_wd(), resource_name)
 
+def lines_to_string(lines):
+    """
+    returns the given lines to a string of text.
+    """
+    return '\n'.join(lines)
+
 def read_file_lines(file_path):
     """
-    Reads the file_path file in
+    Reads the file_path file in as an array of lines.
     """
     if os.path.exists(file_path):
         file_reader = open(file_path, "r")
@@ -146,54 +154,44 @@ def read_file_lines(file_path):
         print_error("File Not Found! " + file_path)
         exit(1)
 
+def read_file_to_string(file_path):
+    """
+    Reads the file_path file in as a single string.
+    """
+    return ''.join(read_file_lines(file_path))
+
+def save_file(file_path, file_contents):
+    """
+    Saves the file_contents to the file_path
+    @param file_contents the contents of the file as a single string.
+    """
+    file_writer = open(file_path, "w")
+    file_writer.write(file_contents)
+    file_writer.flush()
+    file_writer.close()
+
 def save_file_lines(file_path, lines):
     """
     Erases contents of file in file_path and
     writes all lines to the file.
     """
-    for line in lines:
-        if isinstance(line, list):
-            print line
     file_writer = open(file_path, "w")
-    file_contents = ''.join(lines)
+    file_contents = lines_to_string(lines)
     file_writer.write(file_contents)
     file_writer.flush()
     file_writer.close()
 
-def replace_file_text(file_path, text_to_replace, replacement_text, first_occurrence=True):
+def replace_with_value(string, regex, value):
     """
-    Searches a file for text_to_replace, and replaces the text with the replacement_text.
-    @param first_occurrence whether or not to replace only the first occurrence of text_to_replace.
+    replaces the first match's first group with the given value.
+    @param string the string to search using the regex
+    @param regex the regex containing atleast 1 group.
+    @param value the value to replace the matched group with
     """
-    file_lines = read_file_lines(file_path)
-    for line in file_lines:
-        if text_to_replace in line:
-            line = str(line).replace(text_to_replace, replacement_text)
-            if first_occurrence:
-                break
-    fileinput.close()
-    return file_lines
-
-def insert_lines_before_line(file_path, before_line, lines, before_line_offset=1):
-    """
-    Inserts the lines before the before_line in the given file.
-    @param before_line the str containing the exact contents of the file line.all
-    """
-    before_line = before_line + '\n'
-    file_lines = read_file_lines(file_path)
-    before_line_index = 0
-    for line in file_lines:
-        if line == before_line:
-            print_error("found same lines! ::" + str(before_line_index))
-            break
-        before_line_index += 1
-
-    for line in lines:
-        file_lines.insert(before_line_index - before_line_offset, line + '\n')
-        before_line_index += 1
-
-    return file_lines
-
+    matches = re.search(regex, string)
+    start_index = matches.start(1)
+    end_index = matches.end(1)
+    return string[:start_index] + value + string[end_index:]
 
 
 class Project(object):
@@ -211,9 +209,10 @@ class Project(object):
         Builds the entire react-native typescript project and installs all required packages.
         """
         print "Building React-native Typescript Project..."
-        # self.__create()
-        # self.__install_typescript_packages()
+        self.__create()
+        self.__install_typescript_packages()
         self.__import_typescript_files()
+        self.__update_index_registries()
         self.__update_entry_file_paths()
         self.__update_package_json()
         self.__delete_unnecessary_files()
@@ -295,6 +294,31 @@ class Project(object):
         vscode_dst = os.path.join(self.getwd(), ".vscode/")
         copy_tree(vscode, vscode_dst)
 
+    def __update_index_registries(self):
+        """
+        updates the index file registry names with the project name.
+        """
+        #Handle IOS Index
+        self.__update_index_registry("ios.tsx")
+        #Handle Android Index
+        self.__update_index_registry("android.tsx")
+
+    def __update_index_registry(self, extension):
+        """
+        Updates the Typescript index file's registry name with the project name.
+        @param the index extension: 'android.tsx' or 'ios.tsx'
+        """
+        index = self.getwd_resource(TS_INDEX_LOC + '.' + extension)
+        index_contents = read_file_to_string(index)
+
+        index_contents = replace_with_value(
+            index_contents,
+            TS_INDEX_REGISTRY_REGEX,
+            self.get_name()
+        )
+
+        save_file(index, index_contents)
+
     def __update_entry_file_paths(self):
         """
         Updates the entry file paths for both ios and android.
@@ -304,31 +328,37 @@ class Project(object):
         appdelegate_m = self.getwd_resource(
             os.path.join(IOS_DIR, self.get_name(), IOS_APPDELEGATEM)
         )
-        appdelegate_m_lines = replace_file_text(
-            appdelegate_m,
-            IOS_APPDELEGATEM_JS_LOC,
+        appdelegate_m_contents = read_file_to_string(appdelegate_m)
+
+        appdelegate_m_contents = replace_with_value(
+            appdelegate_m_contents,
+            IOS_APPDELEGATEM_REGEX,
             IOS_APPDELEGATEM_REPLACEMENT
         )
-        save_file_lines(appdelegate_m, appdelegate_m_lines)
+        save_file(appdelegate_m, appdelegate_m_contents)
 
         #Handle android entry file paths
         build_gradle = self.getwd_resource(ANDROID_GRADLE_DIR)
         main_app_java = self.getwd_resource(
             os.path.join(ANDROID_JAVA_DIR, self.get_name(), ANDROID_MAINAPPLICATION)
         )
-        build_gradle_lines = insert_lines_before_line(
-            build_gradle,
-            ANDROID_GRADLE_BEFORE_LINE,
-            ANDROID_GRADLE_LINES
+
+        build_gradle_contents = read_file_to_string(build_gradle)
+        build_gradle_contents = replace_with_value(
+            build_gradle_contents,
+            ANDROID_GRADLE_REGEX,
+            lines_to_string(ANDROID_GRADLE_LINES)
         )
-        save_file_lines(build_gradle, build_gradle_lines)
-        main_app_lines = insert_lines_before_line(
-            main_app_java,
-            ANDROID_MAIN_APP_BEFORE_LINE,
-            ANDROID_MAIN_APP_LINES,
-            ANDROID_MAIN_APP_LINE_OFFSET
+        save_file(build_gradle, build_gradle_contents)
+
+        main_app_java_contents = read_file_to_string(main_app_java)
+        main_app_java_contents = replace_with_value(
+            main_app_java_contents,
+            ANBDROID_MAIN_APP_REGEX,
+            lines_to_string(ANDROID_MAIN_APP_LINES)
         )
-        save_file_lines(main_app_java, main_app_lines)
+        save_file(main_app_java, main_app_java_contents)
+
 
     def __update_package_json(self):
         """
@@ -339,27 +369,26 @@ class Project(object):
         This allows the user to run tests using jest.
         """
         package_json = self.getwd_resource("package.json")
+        package_json_contents = read_file_to_string(package_json)
 
         #Handle package.json scripts:
         print "Adding TypeScript scripts to package.json..."
-        package_json_lines = insert_lines_before_line(
-            package_json,
-            PACKAGE_SCRIPTS_BEFORE_LINE,
-            PACKAGE_SCRIPTS_LINES,
-            PACKAGE_SCRIPTS_LINE_OFFSET
+        package_json_contents = replace_with_value(
+            package_json_contents,
+            PACKAGE_SCRIPTS_REGEX,
+            lines_to_string(PACKAGE_SCRIPTS_LINES)
         )
-        save_file_lines(package_json, package_json_lines)
-
 
         #Handle package.json jest testing preset:
-        print "Adding TypeScript jest test presets to package.json..."
-        jest_lines = insert_lines_before_line(
-            package_json,
-            PACKAGE_JEST_BEFORE_LINE,
-            PACKAGE_JEST_LINES,
-            PACKAGE_JEST_LINE_OFFSET
+        print "Adding TypeScript jest presets to package.json..."
+        package_json_contents = replace_with_value(
+            package_json_contents,
+            PACKAGE_JEST_REGEX,
+            lines_to_string(PACKAGE_JEST_LINES)
         )
-        save_file_lines(package_json, jest_lines)
+
+        #finally, save the final package.json file contents.
+        save_file(package_json, package_json_contents)
 
 
     def __delete_unnecessary_files(self):
@@ -372,14 +401,31 @@ class Project(object):
             .flowconfig
         """
         print "Removing unnecessary react-native files..."
-        tests_path = self.getwd_resource("__tests__/")
-        flow_config = self.getwd_resource(".flowconfig")
-        android_index = self.getwd_resource("index.android.js")
-        ios_index = self.getwd_resource("index.ios.js")
-        rmtree(tests_path)
-        os.remove(flow_config)
-        os.remove(android_index)
-        os.remove(ios_index)
+        self.__safe_remove_tree("__tests__/")
+        self.__safe_remove(".flowconfig")
+        self.__safe_remove("index.android.js")
+        self.__safe_remove("index.ios.js")
+
+    def __safe_remove(self, filename):
+        """
+        Safely removes a Project resource file by checking that it first exists
+        before attempting to remove it.
+        @param filename the file inside this project's working directory to be removed
+        """
+        file_path = self.getwd_resource(filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    def __safe_remove_tree(self, directory):
+        """
+        Safely removes a Project resource folder by checking that it first
+        exists before attempting to remove it.
+        @parm directory the directory to remove inside this projet's working directory
+        """
+        directory_path = self.getwd_resource(directory)
+        if os.path.exists(directory_path):
+            rmtree(directory_path)
+
 
     def get_name(self):
         """
