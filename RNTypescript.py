@@ -15,6 +15,7 @@ import sys
 import os
 import argparse
 import subprocess
+from lazyme.string import color_print
 
 DEFAULT_JS_LOC = "index"
 TYPESCRIPT_JS_LOC = "artifacts/index"
@@ -86,7 +87,7 @@ class Project(object):
         Creates the react-native project
         """
         print "Creating react-native project..."
-        run_command("", )
+        # run_command("react-native init " + self.get_name())
 
     def __install_typescript_packages(self):
         """
@@ -103,6 +104,15 @@ class Project(object):
         --save-dev
         """
         print "Installing TypeScript dev packages..."
+        if os.path.exists(self.getwd()):
+            run_command(
+                "npm install typescript typings tslint rimraf concurrently" +
+                " @types/react@latest @types/react-native@latest @types/jest@latest"
+            )
+        else:
+            color_print("Project Working Directory doesn't exist!", color="red")
+            color_print("\t" + self.getwd(), color="red")
+            exit(1)
 
     def __import_typescript_files(self):
         """
@@ -113,6 +123,7 @@ class Project(object):
             .vscode/tasks.json
         """
         print "Importing TypeScript files..."
+
 
     def __import_vscode_tasks(self):
         """
