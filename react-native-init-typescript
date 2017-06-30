@@ -54,7 +54,7 @@ ANBDROID_MAIN_APP_REGEX = r'new\sReactNativeHost\(.+\)\s{\n()'
 ANDROID_MAIN_APP_LINES = [
     ""
     "\t@Override",
-    "\tprotected String getJsMainModuleName() {",
+    "\tprotected String getJSMainModuleName() {",
     "\t\treturn \"" + TS_JS_INDEX_LOC +".android\"",
     "\t}",
     ""

@@ -12,11 +12,16 @@
     "allowJs": false,
     "sourceMap": true,
     "noImplicitReturns": true,
-    "noUnusedParameters": true,
-    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "noUnusedLocals": false,
+    "experimentalDecorators": true,
     "baseUrl": "./src",
     "paths": {
-        "*": ["*", "*.ios", "*.android"]
+        "*": [
+          "*",
+          "*.ios.tsx",
+          "*.android.tsx"
+        ]
     }
   },
   "filesGlob": [
